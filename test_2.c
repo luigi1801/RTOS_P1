@@ -31,15 +31,11 @@ struct task_info
   struct vars_Arcsin vars;
 };
 
-static struct task_info   Tasks[MAX_PROC_NUM];
+static struct task_info            Tasks[MAX_PROC_NUM];
 static volatile struct vars_Arcsin procContextVars;
 
 double calcArcsin(int n)
 {
-  /*double& factor = procContextVars.factor;
-  int& i = procContextVars.i;
-  double& val = procContextVars.val;*/
-
   for(procContextVars.i = 1; procContextVars.i<n; procContextVars.i++)
   {
     sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
@@ -57,7 +53,7 @@ double calcArcsin(int n)
   printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, procContextVars.val, procContextVars.i);
   Tasks[process_id].is_finished = 1;
 
-  while (1);
+  while(1);
   return procContextVars.val;
 }
 
