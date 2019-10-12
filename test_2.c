@@ -4,32 +4,16 @@
 #include<signal.h>
 #include<sys/time.h>
 #include<string.h>
-
-
 #include <setjmp.h>
-
-// https://www.gnu.org/software/libc/manual/html_node/Setting-an-Alarm.html
-
-static volatile sig_atomic_t val = 0;
 
 jmp_buf jmpbuffer_initial;
 jmp_buf jmpbuffer_final;
 
-#define Total_process 3
+#define MAX_PROC_NUM 3
 
 static volatile sig_atomic_t process_id = 0;
 static sigset_t mask;
 static sigset_t orig_mask;
-
-struct task_info
-{
-  jmp_buf env;
-  int is_initialized;
-  int is_finished;
-  int iter;
-  double factor;
-  double val;
-};
 
 struct vars_Arcsin
 {
@@ -38,74 +22,89 @@ struct vars_Arcsin
   double val;
 };
 
-static struct task_info all_tasks[Total_process];
+struct task_info
+{
+  jmp_buf env;
+  int n;
+  int is_initialized;
+  int is_finished;
+  struct vars_Arcsin vars;
+};
+
+static struct task_info   Tasks[MAX_PROC_NUM];
+static volatile struct vars_Arcsin procContextVars;
 
 double calcArcsin(int n)
 {
-  double factor = 2.0;
-  int i = 0;
-  double val = 2.0;
-  all_tasks[process_id].val = 2;
-  all_tasks[process_id].iter = 1;
-  for(i = 1; i<n; i++)
+  /*double& factor = procContextVars.factor;
+  int& i = procContextVars.i;
+  double& val = procContextVars.val;*/
+
+  for(procContextVars.i = 1; procContextVars.i<n; procContextVars.i++)
   {
-    sigprocmask(SIG_BLOCK, &mask, &orig_mask);
+    sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
 
-    factor *= (2*i-1);
-    factor /= (2*i);
+    procContextVars.factor *= (2*procContextVars.i-1);
+    procContextVars.factor /= (2*procContextVars.i);
 
-    val += factor/(2*i+1);
-    
-    all_tasks[process_id].val = val;
-    all_tasks[process_id].factor = factor;
-    all_tasks[process_id].iter = i;
-    //printf("P #%d, I =%d\n", process_id, i);
-    sigsetjmp(all_tasks[process_id].env, process_id + 1);
-    
-    val = all_tasks[process_id].val;
-    factor = all_tasks[process_id].factor;
-    i = all_tasks[process_id].iter;
+    procContextVars.val += procContextVars.factor/(2*procContextVars.i+1);
 
-    sigprocmask(SIG_SETMASK, &orig_mask, NULL);
+    //printf("P #%d, I =%d\n", process_id, procContextVars.i); //DEBUG
+    sigsetjmp(Tasks[process_id].env, process_id + 1);
+
+    sigprocmask(SIG_SETMASK, &orig_mask, NULL); // END OF CRITICAL REGION
   }
-  printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, all_tasks[process_id].val, all_tasks[process_id].iter);
-  all_tasks[process_id].is_finished = 1;
+  printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, procContextVars.val, procContextVars.i);
+  Tasks[process_id].is_finished = 1;
 
   while (1);
-  return val;
+  return procContextVars.val;
 }
 
-void scheduler(int signum)
+void RR_Scheduler(int signum)
 {
-  if(0 == all_tasks[process_id].is_finished)
-    printf("Interrumpting process #%d. \tval: %f.\t It: %d.\n", process_id, all_tasks[process_id].val, all_tasks[process_id].iter);
-  all_tasks[process_id].is_initialized = 1;
+  // Set appropriate flags and store relevant exec info
+  Tasks[process_id].is_initialized = 1;
+  Tasks[process_id].vars = procContextVars;
+
+  if(0 == Tasks[process_id].is_finished)
+    printf("Interrumpting process #%d. \tval: %f.\t It: %d.\n", process_id, Tasks[process_id].vars.val, Tasks[process_id].vars.i);
+
+  // Find next available task
   int counter_finished = 0;
   do{
     process_id ++;
-    process_id %= Total_process;
+    process_id %= MAX_PROC_NUM;
     counter_finished++;
   }
-  while(1 == all_tasks[process_id].is_finished && counter_finished <= Total_process);
+  while(1 == Tasks[process_id].is_finished && counter_finished <= MAX_PROC_NUM);
 
-  if(Total_process < counter_finished)
+  if(MAX_PROC_NUM < counter_finished)// We are done!!
     siglongjmp(jmpbuffer_final, 150);
 
-  if(1 == all_tasks[process_id].is_initialized)
-    siglongjmp(all_tasks[process_id].env, process_id);
-  else
+  if(1 == Tasks[process_id].is_initialized)// Task had already been scheduled before, restore it
+  {
+    procContextVars = Tasks[process_id].vars; //{factor, i, val}
+    siglongjmp(Tasks[process_id].env, process_id);
+  }
+  else// Task is being executed for the first time, setup initial state
+  {
+    procContextVars.val = 2;
+    procContextVars.i = 1;
+    procContextVars.factor = 2;
     siglongjmp(jmpbuffer_initial, process_id);
+  }
   
 }
 
 void setInterruption()
 {
-    struct sigaction sa; 
-    struct itimerval timer; 
+    struct sigaction sa;
+    struct itimerval timer;
 
     // Install our timer_handler as the signal handler for SIGVTALRM
-    memset (&sa, 0, sizeof (sa)); 
-    sa.sa_handler = &scheduler; 
+    memset (&sa, 0, sizeof (sa));
+    sa.sa_handler = &RR_Scheduler;
     sigaction (SIGVTALRM, &sa, NULL);
 
     sigemptyset (&mask);
@@ -116,22 +115,35 @@ void setInterruption()
     timer.it_value.tv_usec = 200;
     // Set a 250 msec interval
     timer.it_interval.tv_sec = 0;
-    timer.it_interval.tv_usec = 200; 
+    timer.it_interval.tv_usec = 200;
     setitimer (ITIMER_VIRTUAL, &timer, NULL);
 }
 
 int main(void)
 {
-  for(int i=0; i < Total_process; i++){
-    all_tasks[i].is_initialized = 0;
-    all_tasks[i].is_initialized = 0;
+  // Initialize stuff
+  for(int i=0; i < MAX_PROC_NUM; i++)
+  {
+    Tasks[i].is_initialized = 0;
+    Tasks[i].is_finished = 0;
   }
+  procContextVars.val = 2;
+  procContextVars.i = 1;
+  procContextVars.factor = 2;
 
   setInterruption();
-  sigsetjmp(jmpbuffer_initial,1);
 
-  if(0 != sigsetjmp(jmpbuffer_final,1)) return 0;
+  if(0 != sigsetjmp(jmpbuffer_final, 1)) 
+  {
+    for(int i=0; i < MAX_PROC_NUM; i++) // Let's see them PIs, baby
+      printf("P%d's PI = %f\n", i, Tasks[i].vars.val);
+    return 0;
+  }
 
-  double valpi = calcArcsin(1500000000); 
+  sigsetjmp(jmpbuffer_initial, 1);
+
+  //double valpi = calcArcsin(1500000000);//1500 mill
+  //double valpi = calcArcsin(100000000);//100 mill
+  double valpi = calcArcsin(2000000);
   return 0;
 }
