@@ -8,7 +8,6 @@
 
 #include <setjmp.h>
 
-
 // https://www.gnu.org/software/libc/manual/html_node/Setting-an-Alarm.html
 
 static volatile sig_atomic_t val = 0;
@@ -28,6 +27,14 @@ struct task_info
   int is_initialized;
   int is_finished;
   int iter;
+  double factor;
+  double val;
+};
+
+struct vars_Arcsin
+{
+  double factor;
+  int i;
   double val;
 };
 
@@ -36,7 +43,7 @@ static struct task_info all_tasks[Total_process];
 double calcArcsin(int n)
 {
   double factor = 2.0;
-  volatile int i = 0;
+  int i = 0;
   double val = 2.0;
   all_tasks[process_id].val = 2;
   all_tasks[process_id].iter = 1;
@@ -50,9 +57,15 @@ double calcArcsin(int n)
     val += factor/(2*i+1);
     
     all_tasks[process_id].val = val;
+    all_tasks[process_id].factor = factor;
     all_tasks[process_id].iter = i;
+    //printf("P #%d, I =%d\n", process_id, i);
     sigsetjmp(all_tasks[process_id].env, process_id + 1);
     
+    val = all_tasks[process_id].val;
+    factor = all_tasks[process_id].factor;
+    i = all_tasks[process_id].iter;
+
     sigprocmask(SIG_SETMASK, &orig_mask, NULL);
   }
   printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, all_tasks[process_id].val, all_tasks[process_id].iter);
@@ -73,9 +86,9 @@ void scheduler(int signum)
     process_id %= Total_process;
     counter_finished++;
   }
-  while(1 == all_tasks[process_id].is_finished && counter_finished < Total_process);
+  while(1 == all_tasks[process_id].is_finished && counter_finished <= Total_process);
 
-  if(Total_process == counter_finished)
+  if(Total_process < counter_finished)
     siglongjmp(jmpbuffer_final, 150);
 
   if(1 == all_tasks[process_id].is_initialized)
@@ -119,6 +132,6 @@ int main(void)
 
   if(0 != sigsetjmp(jmpbuffer_final,1)) return 0;
 
-  double valpi = calcArcsin(1500000); 
+  double valpi = calcArcsin(1500000000); 
   return 0;
 }
