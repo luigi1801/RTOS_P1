@@ -1,0 +1,7 @@
+# this is a comment
+algorithm=1
+numProc=7
+arrTime=2 4 5 7 8 56 34
+procWork=1 2 3 4 5 6 7
+ticketNum=10 20 30 50 60 70 80
+quantum=400
