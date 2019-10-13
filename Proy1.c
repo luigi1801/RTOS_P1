@@ -8,10 +8,12 @@
 #include <ctype.h>//for config reader
 #include <gtk/gtk.h>
 
-/*--------------------------Config reader-----------------------------*/
+/*--------------------------Define Section-----------------------------*/
 #define MAXLEN 80
 #define CONFIG_FILE "config.txt"
 #define MAX_TASKS 25
+
+/*--------------------------Enum and structs-----------------------------*/
 
 enum algthms
 {
@@ -28,6 +30,52 @@ struct conf_params
   int  ticketNum[MAX_TASKS];
   int  quantum; // In us
 } conf_params;
+
+struct task_widget
+{
+  GtkWidget *lbl_Active;
+  GtkWidget *lbl_Value;
+  GtkWidget *pb_Percentage;
+};
+
+struct vars_Arcsin
+{
+  double factor;
+  int i;
+  double val;
+};
+
+struct task_info
+{
+  jmp_buf env;
+  int n;
+  int is_initialized;
+  int is_finished;
+  int tickets;
+  struct vars_Arcsin vars;
+};
+
+/*--------------------------Global Variables-----------------------------*/
+
+// General
+int number_Tasks;
+static struct task_info Tasks[MAX_TASKS];
+static volatile sig_atomic_t process_id = 0;
+static sigset_t mask;
+static sigset_t orig_mask;
+
+// For GUI
+static struct task_widget all_Widgets[MAX_TASKS];
+double value_random;
+
+// For Schedulers
+jmp_buf jmpbuffer_initial;
+jmp_buf jmpbuffer_final;
+static volatile struct vars_Arcsin procContextVars;
+int TotalTickets;
+int actualAlgrthm;
+
+/*--------------------------Config reader-----------------------------*/
 
 // For getting rid of trailing and leading whitespace
 // including line break char from fgets()
@@ -114,18 +162,6 @@ void ReadConfig(struct conf_params* params)
 
 /*-----------------------------------------GUI-------------------------*/
 
-int number_Tasks;
-double value_random;
-
-struct task_widget
-{
-  GtkWidget *lbl_Active;
-  GtkWidget *lbl_Value;
-  GtkWidget *pb_Percentage;
-};
-
-static struct task_widget all_Widgets[MAX_TASKS];
-
 static gboolean update_GUI(gpointer data)
 {
 
@@ -204,33 +240,6 @@ void *control_GUI()
 
 /*--------------------------------------------------------------------*/
 
-jmp_buf jmpbuffer_initial;
-jmp_buf jmpbuffer_final;
-
-
-static volatile sig_atomic_t process_id = 0;
-static sigset_t mask;
-static sigset_t orig_mask;
-
-struct vars_Arcsin
-{
-  double factor;
-  int i;
-  double val;
-};
-
-struct task_info
-{
-  jmp_buf env;
-  int n;
-  int is_initialized;
-  int is_finished;
-  struct vars_Arcsin vars;
-};
-
-static struct task_info Tasks[MAX_TASKS];
-static volatile struct vars_Arcsin procContextVars;
-
 double calcArcsin(int n)
 {
   for(procContextVars.i = 1; procContextVars.i<n; procContextVars.i++)
@@ -247,20 +256,23 @@ double calcArcsin(int n)
 
     sigprocmask(SIG_SETMASK, &orig_mask, NULL); // END OF CRITICAL REGION
   }
-  printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, procContextVars.val, procContextVars.i);
-  Tasks[process_id].is_finished = 1;
 
   while(1);
   return procContextVars.val;
 }
 
+/*------------------------------------------Schedulers--------------------------*/
+
 void RR_Scheduler(int signum)
 {
   // Set appropriate flags and store relevant exec info
-  Tasks[process_id].is_initialized = 1;
   Tasks[process_id].vars = procContextVars;
-
-  if(0 == Tasks[process_id].is_finished)
+  if(procContextVars.i == Tasks[process_id].n)
+  {
+    printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, procContextVars.val, procContextVars.i);
+    Tasks[process_id].is_finished = 1;
+  }
+  else if(0 == Tasks[process_id].is_finished)
     printf("Interrumpting process #%d. \tval: %f.\t It: %d.\n", process_id, Tasks[process_id].vars.val, Tasks[process_id].vars.i);
 
   // Find next available task
@@ -282,13 +294,66 @@ void RR_Scheduler(int signum)
   }
   else// Task is being executed for the first time, setup initial state
   {
+    Tasks[process_id].is_initialized = 1;
     procContextVars.val = 2;
     procContextVars.i = 1;
     procContextVars.factor = 2;
     siglongjmp(jmpbuffer_initial, process_id);
   }
-  
 }
+
+int setLotteryWinner()
+{
+  int acumm = 0.0;
+  int comparator = rand()%TotalTickets;
+
+  for(int i = 0; i < number_Tasks; i++)
+  {
+    if(1 == Tasks[i].is_finished) continue;
+    acumm += Tasks[i].tickets;
+    if (acumm > comparator)
+      return i;
+  }
+
+  return -1;
+}
+
+void Lottery_Scheduler(int signum)
+{
+  // Set appropriate flags and store relevant exec info
+  Tasks[process_id].vars = procContextVars;
+  if(procContextVars.i == Tasks[process_id].n)
+  {
+    printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, procContextVars.val, procContextVars.i);
+    Tasks[process_id].is_finished = 1;
+    TotalTickets -= Tasks[process_id].tickets;
+  }
+
+  if(0 == Tasks[process_id].is_finished)
+    printf("Interrumpting process #%d. \tval: %f.\t It: %d.\n", process_id, Tasks[process_id].vars.val, Tasks[process_id].vars.i);
+
+  // Find next available task
+  process_id = TotalTickets != 0? setLotteryWinner() : -1;
+
+  if(-1 == process_id)// We are done!!
+    siglongjmp(jmpbuffer_final, 150);
+
+  if(1 == Tasks[process_id].is_initialized)// Task had already been scheduled before, restore it
+  {
+    procContextVars = Tasks[process_id].vars; //{factor, i, val}
+    siglongjmp(Tasks[process_id].env, process_id);
+  }
+  else// Task is being executed for the first time, setup initial state
+  {
+    Tasks[process_id].is_initialized = 1;
+    procContextVars.val = 2;
+    procContextVars.i = 1;
+    procContextVars.factor = 2;
+    siglongjmp(jmpbuffer_initial, process_id);
+  }
+}
+
+/*------------------------------------------Interrupt--------------------------*/
 
 void setInterruption()
 {
@@ -297,7 +362,17 @@ void setInterruption()
 
     // Install our timer_handler as the signal handler for SIGVTALRM
     memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = &RR_Scheduler;
+    //sa.sa_handler = &RR_Scheduler;
+    switch(actualAlgrthm)
+    {
+      case RR:
+        sa.sa_handler = &RR_Scheduler;
+        break;
+      case LS:
+      default:
+        sa.sa_handler = &Lottery_Scheduler;
+        break;
+    }
     sigaction(SIGVTALRM, &sa, NULL);
 
     sigemptyset(&mask);
@@ -312,24 +387,41 @@ void setInterruption()
     setitimer(ITIMER_VIRTUAL, &timer, NULL);
 }
 
+/*------------------------------------------Main --------------------------*/
+
  
 int main(void)
 {
+  actualAlgrthm = LS;
+
+  /* Intializes random number generator */
+  time_t t;
+  srand((unsigned) time(&t));
+
   pthread_t thread1;
   int  iret1;
+  int N = 20000;
 
   number_Tasks = 3;
+  TotalTickets = 0;
   value_random = 0.0;
+  process_id = 0; 
 
   // Initialize stuff
   for(int i=0; i < number_Tasks; i++)
   {
     Tasks[i].is_initialized = 0;
     Tasks[i].is_finished = 0;
+    Tasks[i].tickets = (i+1)*1000;
+    Tasks[i].n = N;
+    TotalTickets += (i+1)*1000;
   }
+
+  // Set info for the first process
   procContextVars.val = 2;
   procContextVars.i = 1;
   procContextVars.factor = 2;
+  Tasks[process_id].is_initialized = 1;
 
   //iret1 = pthread_create(&thread1, NULL, control_GUI, NULL);
   setInterruption();
@@ -347,6 +439,6 @@ int main(void)
   //double valpi = calcArcsin(1500000000);//1500 mill
   //double valpi = calcArcsin(100000000);//100 mill
   //double valpi = calcArcsin(2000000);
-  double valpi = calcArcsin(20000);
+  double valpi = calcArcsin(N);
   return 0;
 };
