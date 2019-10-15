@@ -43,12 +43,13 @@ struct vars_Arcsin
   double factor;
   int i;
   double val;
+  int N;
 };
 
 struct task_info
 {
   jmp_buf env;
-  int n;
+  int N;
   int is_initialized;
   int is_finished;
   int tickets;
@@ -58,7 +59,7 @@ struct task_info
 /*--------------------------Global Variables-----------------------------*/
 
 // General
-int number_Tasks;
+int number_Ready_Tasks;
 static struct task_info Tasks[MAX_TASKS];
 static volatile sig_atomic_t process_id = 0;
 static sigset_t mask;
@@ -164,7 +165,7 @@ void ReadConfig(struct conf_params* params)
 
 double calcArcsin(int n)
 {
-  for(procContextVars.i = 1; procContextVars.i<n; procContextVars.i++)
+  for(procContextVars.i = 1; procContextVars.i<procContextVars.N; procContextVars.i++)
   {
     sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
 
@@ -186,37 +187,83 @@ double calcArcsin(int n)
 
 /*------------------------------------------Schedulers--------------------------*/
 
-void RR_Scheduler(int signum)
+void setNextID_RR()
 {
-  sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
+  // Find next available task
+  int counter_finished = 0;
+  do{
+    process_id ++;
+    process_id %= number_Ready_Tasks;
+    counter_finished++;
+  }
+  while(1 == Tasks[process_id].is_finished && counter_finished <= number_Ready_Tasks);
+
+  if (number_Ready_Tasks < counter_finished)
+    process_id = -1;
+
+}
+
+int setLotteryWinner()
+{
+  process_id = -1;
+  if(0 != TotalTickets)
+  {
+    int acumm = 0;
+    int comparator = rand()%TotalTickets;
+
+    for(int i = 0; i < number_Ready_Tasks; i++)
+    {
+      if(1 == Tasks[i].is_finished) continue;
+      acumm += Tasks[i].tickets;
+      if (acumm > comparator){
+        process_id =  i;
+        break;
+      }
+    }
+  }
+}
+
+void setNextID()
+{
+  switch(actualAlgrthm)
+  {
+    case RR:
+      setNextID_RR();
+      break;
+    case LS:
+    default:
+      setLotteryWinner();
+      break;
+  }
+}
+
+
+void Scheduler(int signum)
+{
+  //sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
   
   jmp_buf * Next_env;
 
   // Set appropriate flags and store relevant exec info
   Tasks[process_id].vars = procContextVars;
-  if(procContextVars.i == Tasks[process_id].n)
+  if(procContextVars.i == Tasks[process_id].N)
   {
     printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, procContextVars.val, procContextVars.i);
     Tasks[process_id].is_finished = 1;
+    TotalTickets -= Tasks[process_id].tickets;
+
   }
   else if(0 == Tasks[process_id].is_finished)
     printf("Interrumpting process #%d. \tval: %f.\t It: %d.\n", process_id, Tasks[process_id].vars.val, Tasks[process_id].vars.i);
 
-  // Find next available task
-  int counter_finished = 0;
-  do{
-    process_id ++;
-    process_id %= number_Tasks;
-    counter_finished++;
-  }
-  while(1 == Tasks[process_id].is_finished && counter_finished <= number_Tasks);
-
-  if(number_Tasks < counter_finished)// We are done!!
+  setNextID();
+  
+   if(-1 == process_id)// We are done!!
     siglongjmp(jmpbuffer_final, 150);
 
   if(1 == Tasks[process_id].is_initialized)// Task had already been scheduled before, restore it
   {
-    procContextVars = Tasks[process_id].vars; //{factor, i, val}
+    procContextVars = Tasks[process_id].vars; //{factor, i, val, N}
     Next_env = &(Tasks[process_id].env);
   }
   else// Task is being executed for the first time, setup initial state
@@ -225,62 +272,12 @@ void RR_Scheduler(int signum)
     procContextVars.val = 2;
     procContextVars.i = 1;
     procContextVars.factor = 2;
+    procContextVars.N = Tasks[process_id].N;
     Next_env = &jmpbuffer_initial;
   }
-  sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
+  //sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
   //sigprocmask(SIG_SETMASK, &orig_mask, NULL); // END OF CRITICAL REGION
   siglongjmp(*Next_env, process_id);
-}
-
-int setLotteryWinner()
-{
-  int acumm = 0.0;
-  int comparator = rand()%TotalTickets;
-
-  for(int i = 0; i < number_Tasks; i++)
-  {
-    if(1 == Tasks[i].is_finished) continue;
-    acumm += Tasks[i].tickets;
-    if (acumm > comparator)
-      return i;
-  }
-
-  return -1;
-}
-
-void Lottery_Scheduler(int signum)
-{
-  // Set appropriate flags and store relevant exec info
-  Tasks[process_id].vars = procContextVars;
-  if(procContextVars.i == Tasks[process_id].n)
-  {
-    printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, procContextVars.val, procContextVars.i);
-    Tasks[process_id].is_finished = 1;
-    TotalTickets -= Tasks[process_id].tickets;
-  }
-
-  if(0 == Tasks[process_id].is_finished)
-    printf("Interrumpting process #%d. \tval: %f.\t It: %d.\n", process_id, Tasks[process_id].vars.val, Tasks[process_id].vars.i);
-
-  // Find next available task
-  process_id = TotalTickets != 0? setLotteryWinner() : -1;
-
-  if(-1 == process_id)// We are done!!
-    siglongjmp(jmpbuffer_final, 150);
-
-  if(1 == Tasks[process_id].is_initialized)// Task had already been scheduled before, restore it
-  {
-    procContextVars = Tasks[process_id].vars; //{factor, i, val}
-    siglongjmp(Tasks[process_id].env, process_id);
-  }
-  else// Task is being executed for the first time, setup initial state
-  {
-    Tasks[process_id].is_initialized = 1;
-    procContextVars.val = 2;
-    procContextVars.i = 1;
-    procContextVars.factor = 2;
-    siglongjmp(jmpbuffer_initial, process_id);
-  }
 }
 
 /*------------------------------------------Interrupt--------------------------*/
@@ -292,17 +289,8 @@ void setInterruption()
 
     // Install our timer_handler as the signal handler for SIGVTALRM
     memset(&sa, 0, sizeof(sa));
-    //sa.sa_handler = &RR_Scheduler;
-    switch(actualAlgrthm)
-    {
-      case RR:
-        sa.sa_handler = &RR_Scheduler;
-        break;
-      case LS:
-      default:
-        sa.sa_handler = &Lottery_Scheduler;
-        break;
-    }
+    sa.sa_handler = &Scheduler;
+
     sigaction(SIGVTALRM, &sa, NULL);
 
     //sigemptyset(&mask);
@@ -323,12 +311,12 @@ void * processor()
 {
   int N = 200000;
   // Initialize stuff
-  for(int i=0; i < number_Tasks; i++)
+  for(int i=0; i < number_Ready_Tasks; i++)
   {
     Tasks[i].is_initialized = 0;
     Tasks[i].is_finished = 0;
     Tasks[i].tickets = (i+1)*1000;
-    Tasks[i].n = N;
+    Tasks[i].N = N;//*(i+1)
     TotalTickets += (i+1)*1000;
   }
 
@@ -336,13 +324,14 @@ void * processor()
   procContextVars.val = 2;
   procContextVars.i = 1;
   procContextVars.factor = 2;
+  procContextVars.N = Tasks[process_id].N;
   Tasks[process_id].is_initialized = 1;
 
   setInterruption();
 
   if(0 != sigsetjmp(jmpbuffer_final, 1)) 
   {
-    for(int i=0; i < number_Tasks; i++) // Let's see them PIs, baby
+    for(int i=0; i < number_Ready_Tasks; i++) // Let's see them PIs, baby
       printf("P%d's PI = %f\n", i, Tasks[i].vars.val);
   }
   else{
@@ -384,7 +373,7 @@ void *control_GUI()
     
   window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 
-  table = gtk_table_new (number_Tasks+1, 4, TRUE);
+  table = gtk_table_new (number_Ready_Tasks+1, 4, TRUE);
 
   label = gtk_label_new("Thread #");
   gtk_table_attach_defaults (GTK_TABLE (table), label, 0, 1, 0, 1);
@@ -399,7 +388,7 @@ void *control_GUI()
   gtk_table_attach_defaults (GTK_TABLE (table), label, 3, 4, 0, 1);
 
   char c[20];
-  for(int i = 1; i<=number_Tasks; i++)
+  for(int i = 1; i<=number_Ready_Tasks; i++)
   { 
     sprintf(c, "%d", i);
     label = gtk_label_new(c);
@@ -447,9 +436,8 @@ int main(void)
 
   pthread_t thread1;
   int  iret1;
-  int N = 200000;
 
-  number_Tasks = 3;
+  number_Ready_Tasks = 3;
   TotalTickets = 0;
   value_random = 0.0;
   process_id = 0; 
@@ -463,9 +451,9 @@ int main(void)
   //gui_Thread2 = g_thread_new("", &processor, (gpointer)NULL);
   //sleep(2);
   processor();
+  //control_GUI();
   //g_thread_join(gui_Thread);
   //g_thread_join(gui_Thread2);
-  //control_GUI();
 
   return 0;
 }
