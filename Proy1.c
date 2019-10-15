@@ -66,7 +66,7 @@ static sigset_t orig_mask;
 
 // For GUI
 static struct task_widget all_Widgets[MAX_TASKS];
-double value_random;
+static double value_random;
 
 // For Schedulers
 jmp_buf jmpbuffer_initial;
@@ -160,85 +160,7 @@ void ReadConfig(struct conf_params* params)
   fclose(fp);
 }
 
-/*-----------------------------------------GUI-------------------------*/
-
-static gboolean update_GUI(gpointer data)
-{
-
-  value_random += 0.05;
-  if (value_random>1)
-    value_random = 0;
-  
-  char c[4];
-  sprintf(c, "%d%%", (int)(value_random*100));
-    
-  gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[0].pb_Percentage), value_random);
-  gtk_progress_bar_set_text(GTK_PROGRESS_BAR(all_Widgets[0].pb_Percentage), c); 
-
-  return TRUE;
-}
-
-void *control_GUI()
-{
-  GtkWidget *window;
-  GtkWidget *table;
-  GtkWidget *label;
-
-  gtk_init(NULL, NULL);
-    
-  window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
-
-  table = gtk_table_new (number_Tasks+1, 4, TRUE);
-
-  label = gtk_label_new("Thread #");
-  gtk_table_attach_defaults (GTK_TABLE (table), label, 0, 1, 0, 1);
-
-  label = gtk_label_new("% Trabajo Terminado");
-  gtk_table_attach_defaults (GTK_TABLE (table), label, 1, 2, 0, 1);
-
-  label = gtk_label_new("Trabajo Activo");
-  gtk_table_attach_defaults (GTK_TABLE (table), label, 2, 3, 0, 1);
-
-  label = gtk_label_new("Valor Acumulado");
-  gtk_table_attach_defaults (GTK_TABLE (table), label, 3, 4, 0, 1);
-
-  char c[20];
-  for(int i = 1; i<=number_Tasks; i++)
-  { 
-    sprintf(c, "%d", i);
-    label = gtk_label_new(c);
-    gtk_table_attach_defaults (GTK_TABLE(table), label, 0, 1, i, i+1);
-    
-    sprintf(c, "%d", 0);
-    all_Widgets[i-1].pb_Percentage = gtk_progress_bar_new();
-    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[i-1].pb_Percentage), 0.0);
-    gtk_progress_bar_set_text(GTK_PROGRESS_BAR(all_Widgets[i-1].pb_Percentage), "0%");
-    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].pb_Percentage , 1, 2, i, i+1);
-  
-    all_Widgets[i-1].lbl_Active = gtk_label_new("Inactivo");
-    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].lbl_Active, 2, 3, i, i+1);
-    
-    all_Widgets[i-1].lbl_Value = gtk_label_new(c);
-    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].lbl_Value , 3, 4, i, i+1);
-  }
-
-  gtk_label_set_text(GTK_LABEL(all_Widgets[1].lbl_Value), "25");
-      
-  gtk_container_add (GTK_CONTAINER (window), table);
-
-  g_signal_connect (window, "delete-event", G_CALLBACK (gtk_main_quit), NULL);
-  g_signal_connect (window, "destroy", G_CALLBACK (gtk_main_quit), NULL);
-
-  g_timeout_add(1000, update_GUI, table);
-
-  gtk_container_set_border_width (GTK_CONTAINER (window), 10);
-
-  gtk_widget_show_all(window);
-    
-  gtk_main ();
-}
-
-/*--------------------------------------------------------------------*/
+/*------------------------------------Arcsin--------------------------------*/
 
 double calcArcsin(int n)
 {
@@ -254,7 +176,8 @@ double calcArcsin(int n)
     //printf("P #%d, I =%d\n", process_id, procContextVars.i); //DEBUG
     sigsetjmp(Tasks[process_id].env, process_id + 1);
 
-    sigprocmask(SIG_SETMASK, &orig_mask, NULL); // END OF CRITICAL REGION
+    sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
+    //sigprocmask(SIG_SETMASK, &orig_mask, NULL); // END OF CRITICAL REGION
   }
 
   while(1);
@@ -265,6 +188,10 @@ double calcArcsin(int n)
 
 void RR_Scheduler(int signum)
 {
+  sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
+  
+  jmp_buf * Next_env;
+
   // Set appropriate flags and store relevant exec info
   Tasks[process_id].vars = procContextVars;
   if(procContextVars.i == Tasks[process_id].n)
@@ -290,7 +217,7 @@ void RR_Scheduler(int signum)
   if(1 == Tasks[process_id].is_initialized)// Task had already been scheduled before, restore it
   {
     procContextVars = Tasks[process_id].vars; //{factor, i, val}
-    siglongjmp(Tasks[process_id].env, process_id);
+    Next_env = &(Tasks[process_id].env);
   }
   else// Task is being executed for the first time, setup initial state
   {
@@ -298,8 +225,11 @@ void RR_Scheduler(int signum)
     procContextVars.val = 2;
     procContextVars.i = 1;
     procContextVars.factor = 2;
-    siglongjmp(jmpbuffer_initial, process_id);
+    Next_env = &jmpbuffer_initial;
   }
+  sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
+  //sigprocmask(SIG_SETMASK, &orig_mask, NULL); // END OF CRITICAL REGION
+  siglongjmp(*Next_env, process_id);
 }
 
 int setLotteryWinner()
@@ -375,8 +305,8 @@ void setInterruption()
     }
     sigaction(SIGVTALRM, &sa, NULL);
 
-    sigemptyset(&mask);
-    sigaddset(&mask, SIGVTALRM);
+    //sigemptyset(&mask);
+    //sigaddset(&mask, SIGVTALRM);
 
     // Configure the timer to 250 msec
     timer.it_value.tv_sec = 0; // this is necessary
@@ -387,26 +317,11 @@ void setInterruption()
     setitimer(ITIMER_VIRTUAL, &timer, NULL);
 }
 
-/*------------------------------------------Main --------------------------*/
+/*-----------------------------------------Processor-------------------------*/
 
- 
-int main(void)
+void * processor()
 {
-  actualAlgrthm = LS;
-
-  /* Intializes random number generator */
-  time_t t;
-  srand((unsigned) time(&t));
-
-  pthread_t thread1;
-  int  iret1;
-  int N = 20000;
-
-  number_Tasks = 3;
-  TotalTickets = 0;
-  value_random = 0.0;
-  process_id = 0; 
-
+  int N = 200000;
   // Initialize stuff
   for(int i=0; i < number_Tasks; i++)
   {
@@ -423,22 +338,134 @@ int main(void)
   procContextVars.factor = 2;
   Tasks[process_id].is_initialized = 1;
 
-  //iret1 = pthread_create(&thread1, NULL, control_GUI, NULL);
   setInterruption();
 
   if(0 != sigsetjmp(jmpbuffer_final, 1)) 
   {
     for(int i=0; i < number_Tasks; i++) // Let's see them PIs, baby
       printf("P%d's PI = %f\n", i, Tasks[i].vars.val);
-    //pthread_join( thread1, NULL);
-    return 0;
+  }
+  else{
+    sigsetjmp(jmpbuffer_initial, 1);
+    double valpi = calcArcsin(N);
   }
 
-  sigsetjmp(jmpbuffer_initial, 1);
+}
 
-  //double valpi = calcArcsin(1500000000);//1500 mill
-  //double valpi = calcArcsin(100000000);//100 mill
-  //double valpi = calcArcsin(2000000);
-  double valpi = calcArcsin(N);
+/*-----------------------------------------GUI-------------------------*/
+
+static gboolean update_GUI(gpointer data)
+{
+  sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
+
+  
+  value_random += 0.05;
+  if (value_random>1)
+    value_random = 0;
+  
+  char c[4];
+  sprintf(c, "%d%%", (int)(value_random*100));
+    
+  gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[0].pb_Percentage), value_random);
+  gtk_progress_bar_set_text(GTK_PROGRESS_BAR(all_Widgets[0].pb_Percentage), c); 
+
+  sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
+  //sigprocmask(SIG_SETMASK, &orig_mask, NULL); // END OF CRITICAL REGION
+  return TRUE;
+}
+
+void *control_GUI()
+{
+  GtkWidget *window;
+  GtkWidget *table;
+  GtkWidget *label;
+
+  gtk_init(NULL, NULL);
+    
+  window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
+
+  table = gtk_table_new (number_Tasks+1, 4, TRUE);
+
+  label = gtk_label_new("Thread #");
+  gtk_table_attach_defaults (GTK_TABLE (table), label, 0, 1, 0, 1);
+
+  label = gtk_label_new("% Trabajo Terminado");
+  gtk_table_attach_defaults (GTK_TABLE (table), label, 1, 2, 0, 1);
+
+  label = gtk_label_new("Trabajo Activo");
+  gtk_table_attach_defaults (GTK_TABLE (table), label, 2, 3, 0, 1);
+
+  label = gtk_label_new("Valor Acumulado");
+  gtk_table_attach_defaults (GTK_TABLE (table), label, 3, 4, 0, 1);
+
+  char c[20];
+  for(int i = 1; i<=number_Tasks; i++)
+  { 
+    sprintf(c, "%d", i);
+    label = gtk_label_new(c);
+    gtk_table_attach_defaults (GTK_TABLE(table), label, 0, 1, i, i+1);
+    
+    sprintf(c, "%d", 0);
+    all_Widgets[i-1].pb_Percentage = gtk_progress_bar_new();
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[i-1].pb_Percentage), 0.0);
+    gtk_progress_bar_set_text(GTK_PROGRESS_BAR(all_Widgets[i-1].pb_Percentage), "0%");
+    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].pb_Percentage , 1, 2, i, i+1);
+  
+    all_Widgets[i-1].lbl_Active = gtk_label_new("Inactivo");
+    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].lbl_Active, 2, 3, i, i+1);
+    
+    all_Widgets[i-1].lbl_Value = gtk_label_new(c);
+    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].lbl_Value , 3, 4, i, i+1);
+  }
+
+  gtk_label_set_text(GTK_LABEL(all_Widgets[1].lbl_Value), "25");
+      
+  gtk_container_add (GTK_CONTAINER (window), table);
+
+  g_signal_connect (window, "delete-event", G_CALLBACK (gtk_main_quit), NULL);
+  g_signal_connect (window, "destroy", G_CALLBACK (gtk_main_quit), NULL);
+
+  g_timeout_add(10, update_GUI, table);
+
+  gtk_container_set_border_width (GTK_CONTAINER (window), 10);
+
+  gtk_widget_show_all(window);
+    
+  gtk_main ();
+}
+
+/*------------------------------------------Main --------------------------*/
+
+ 
+int main(void)
+{
+  actualAlgrthm = RR;
+
+  /* Intializes random number generator */
+  time_t t;
+  srand((unsigned) time(&t));
+
+  pthread_t thread1;
+  int  iret1;
+  int N = 200000;
+
+  number_Tasks = 3;
+  TotalTickets = 0;
+  value_random = 0.0;
+  process_id = 0; 
+  sigfillset(&mask);
+  sigemptyset(&orig_mask);
+
+  GThread *gui_Thread;
+  GThread *gui_Thread2;
+  //gui_Thread = g_thread_new("", &control_GUI, (gpointer)NULL);
+  //sleep(2);
+  //gui_Thread2 = g_thread_new("", &processor, (gpointer)NULL);
+  //sleep(2);
+  processor();
+  //g_thread_join(gui_Thread);
+  //g_thread_join(gui_Thread2);
+  //control_GUI();
+
   return 0;
-};
+}
