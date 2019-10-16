@@ -50,6 +50,7 @@ struct task_info
 {
   jmp_buf env;
   int N;
+  int arrTime;
   int is_initialized;
   int is_finished;
   int tickets;
@@ -60,6 +61,7 @@ struct task_info
 
 // General
 int number_Ready_Tasks;
+int Total_tasks;
 static struct task_info Tasks[MAX_TASKS];
 static volatile sig_atomic_t process_id = 0;
 static sigset_t mask;
@@ -72,11 +74,33 @@ static double value_random;
 // For Schedulers
 jmp_buf jmpbuffer_initial;
 jmp_buf jmpbuffer_final;
+jmp_buf jmpbuffer_BusyWaiting;
+
 static volatile struct vars_Arcsin procContextVars;
-int TotalTickets;
-int actualAlgrthm;
+static int TotalTickets;
+static int actualAlgrthm;
+static int quantum_Counter;
 
 /*--------------------------Config reader-----------------------------*/
+
+void initialize_fromReader()
+{
+  actualAlgrthm = LS;
+  Total_tasks = 3;
+  int N = 100000;
+  // Initialize stuff
+  for(int i=0; i < Total_tasks; i++)
+  {
+    Tasks[i].is_initialized = 0;
+    Tasks[i].is_finished = 0;
+    Tasks[i].tickets = (i+1)*1000;
+    Tasks[i].N = N;//*(i+1)
+    Tasks[i].arrTime = 10;//*(i+1)
+  }
+  //Tasks[2].arrTime = 20;//*(i+1)
+
+
+}
 
 // For getting rid of trailing and leading whitespace
 // including line break char from fgets()
@@ -163,7 +187,7 @@ void ReadConfig(struct conf_params* params)
 
 /*------------------------------------Arcsin--------------------------------*/
 
-double calcArcsin(int n)
+double calcArcsin()
 {
   for(procContextVars.i = 1; procContextVars.i<procContextVars.N; procContextVars.i++)
   {
@@ -187,13 +211,26 @@ double calcArcsin(int n)
 
 /*------------------------------------------Schedulers--------------------------*/
 
+void check_ReadyTasks()
+{
+  while(number_Ready_Tasks<Total_tasks)
+  {
+    if(quantum_Counter==Tasks[number_Ready_Tasks].arrTime){
+      TotalTickets += Tasks[number_Ready_Tasks].tickets;
+      number_Ready_Tasks++;
+    }
+    else
+      break;
+  }
+}
+
 void setNextID_RR()
 {
   // Find next available task
+
   int counter_finished = 0;
   do{
-    process_id ++;
-    process_id %= number_Ready_Tasks;
+    process_id = process_id == number_Ready_Tasks - 1 ? 0 :  process_id +1;
     counter_finished++;
   }
   while(1 == Tasks[process_id].is_finished && counter_finished <= number_Ready_Tasks);
@@ -216,7 +253,7 @@ int setLotteryWinner()
       if(1 == Tasks[i].is_finished) continue;
       acumm += Tasks[i].tickets;
       if (acumm > comparator){
-        process_id =  i;
+        process_id = i;
         break;
       }
     }
@@ -225,6 +262,7 @@ int setLotteryWinner()
 
 void setNextID()
 {
+  check_ReadyTasks();
   switch(actualAlgrthm)
   {
     case RR:
@@ -241,25 +279,36 @@ void setNextID()
 void Scheduler(int signum)
 {
   //sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
-  
+  quantum_Counter ++;
   jmp_buf * Next_env;
 
-  // Set appropriate flags and store relevant exec info
-  Tasks[process_id].vars = procContextVars;
-  if(procContextVars.i == Tasks[process_id].N)
-  {
-    printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, procContextVars.val, procContextVars.i);
-    Tasks[process_id].is_finished = 1;
-    TotalTickets -= Tasks[process_id].tickets;
-
+  if(process_id != -1){
+    // Set appropriate flags and store relevant exec info
+      Tasks[process_id].vars = procContextVars;
+      if(procContextVars.i == Tasks[process_id].N)
+      {
+        printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, procContextVars.val, procContextVars.i);
+        Tasks[process_id].is_finished = 1;
+        TotalTickets -= Tasks[process_id].tickets;
+  
+    }
+    else if(0 == Tasks[process_id].is_finished)
+      printf("Interrumpting process #%d. \tval: %f.\t It: %d.\n", process_id, Tasks[process_id].vars.val, Tasks[process_id].vars.i);
   }
-  else if(0 == Tasks[process_id].is_finished)
-    printf("Interrumpting process #%d. \tval: %f.\t It: %d.\n", process_id, Tasks[process_id].vars.val, Tasks[process_id].vars.i);
+  else
+  {
+    printf("Quantum: %d\n", quantum_Counter);
+  }
 
   setNextID();
   
-   if(-1 == process_id)// We are done!!
-    siglongjmp(jmpbuffer_final, 150);
+  if(-1 == process_id)
+  {// We are done!!
+    if (number_Ready_Tasks==Total_tasks)
+      siglongjmp(jmpbuffer_final, 150);
+    else
+      siglongjmp(jmpbuffer_BusyWaiting, 150);
+  }
 
   if(1 == Tasks[process_id].is_initialized)// Task had already been scheduled before, restore it
   {
@@ -277,7 +326,7 @@ void Scheduler(int signum)
   }
   //sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
   //sigprocmask(SIG_SETMASK, &orig_mask, NULL); // END OF CRITICAL REGION
-  siglongjmp(*Next_env, process_id);
+  siglongjmp(*Next_env, process_id+1);
 }
 
 /*------------------------------------------Interrupt--------------------------*/
@@ -309,24 +358,6 @@ void setInterruption()
 
 void * processor()
 {
-  int N = 200000;
-  // Initialize stuff
-  for(int i=0; i < number_Ready_Tasks; i++)
-  {
-    Tasks[i].is_initialized = 0;
-    Tasks[i].is_finished = 0;
-    Tasks[i].tickets = (i+1)*1000;
-    Tasks[i].N = N;//*(i+1)
-    TotalTickets += (i+1)*1000;
-  }
-
-  // Set info for the first process
-  procContextVars.val = 2;
-  procContextVars.i = 1;
-  procContextVars.factor = 2;
-  procContextVars.N = Tasks[process_id].N;
-  Tasks[process_id].is_initialized = 1;
-
   setInterruption();
 
   if(0 != sigsetjmp(jmpbuffer_final, 1)) 
@@ -334,9 +365,11 @@ void * processor()
     for(int i=0; i < number_Ready_Tasks; i++) // Let's see them PIs, baby
       printf("P%d's PI = %f\n", i, Tasks[i].vars.val);
   }
-  else{
-    sigsetjmp(jmpbuffer_initial, 1);
-    double valpi = calcArcsin(N);
+  else if (0 != sigsetjmp(jmpbuffer_initial, 1)){
+    double valpi = calcArcsin();
+  }else{
+    sigsetjmp(jmpbuffer_BusyWaiting, 1);
+    while(1);
   }
 
 }
@@ -428,7 +461,6 @@ void *control_GUI()
  
 int main(void)
 {
-  actualAlgrthm = RR;
 
   /* Intializes random number generator */
   time_t t;
@@ -437,10 +469,13 @@ int main(void)
   pthread_t thread1;
   int  iret1;
 
-  number_Ready_Tasks = 3;
+  initialize_fromReader();
+
+  quantum_Counter = -1;
+  number_Ready_Tasks = 0;
   TotalTickets = 0;
   value_random = 0.0;
-  process_id = 0; 
+  process_id = -1; 
   sigfillset(&mask);
   sigemptyset(&orig_mask);
 
