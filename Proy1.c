@@ -33,9 +33,9 @@ struct conf_params
 
 struct task_widget
 {
-  GtkWidget *lbl_Active;
-  GtkWidget *lbl_Value;
-  GtkWidget *pb_Percentage;
+  GtkWidget* lbl_Active;
+  GtkWidget* lbl_Value;
+  GtkWidget* pb_Percentage;
 };
 
 struct vars_Arcsin
@@ -70,11 +70,12 @@ static sigset_t orig_mask;
 // For GUI
 static struct task_widget all_Widgets[MAX_TASKS];
 static double value_random;
+GMutex* loki;
 
 // For Schedulers
-jmp_buf jmpbuffer_initial;
-jmp_buf jmpbuffer_final;
-jmp_buf jmpbuffer_BusyWaiting;
+jmp_buf* jmpbuffer_initial;
+jmp_buf* jmpbuffer_final;
+jmp_buf* jmpbuffer_BusyWaiting;
 
 static volatile struct vars_Arcsin procContextVars;
 static int TotalTickets;
@@ -107,7 +108,7 @@ void initialize_fromReader()
 char* trim(char* s)
 {
   // Pointers to start & end
-  char *s1 = s, *s2 = &s[strlen(s) - 1];
+  char* s1 = s,* s2 = &s[strlen(s) - 1];
 
   // Trim tail
   while((isspace (*s2)) && (s2 >= s1))
@@ -137,8 +138,8 @@ void StrArrToIntArr(int* intArr, char* str)
 
 void ReadConfig(struct conf_params* params)
 {
-  char *s, buff[256];
-  FILE *fp = fopen(CONFIG_FILE, "r");
+  char* s, buff[256];
+  FILE* fp = fopen(CONFIG_FILE, "r");
   if(fp == NULL)
   {
     return;
@@ -158,7 +159,7 @@ void ReadConfig(struct conf_params* params)
       continue;
     else
       strncpy(name, s, MAXLEN);
-    s = strtok(NULL, "=");// Grab right-hand side of '='
+    s = strtok(NULL, "="); // Grab right-hand side of '='
     if(s==NULL)
       continue;
     else
@@ -185,13 +186,14 @@ void ReadConfig(struct conf_params* params)
   fclose(fp);
 }
 
-/*------------------------------------Arcsin--------------------------------*/
+/*---------------------------------Arcsin-----------------------------------*/
 
 double calcArcsin()
 {
   for(procContextVars.i = 1; procContextVars.i<procContextVars.N; procContextVars.i++)
   {
     sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
+    //g_mutex_lock(loki);
 
     procContextVars.factor *= (2*procContextVars.i-1);
     procContextVars.factor /= (2*procContextVars.i);
@@ -199,17 +201,17 @@ double calcArcsin()
     procContextVars.val += procContextVars.factor/(2*procContextVars.i+1);
 
     //printf("P #%d, I =%d\n", process_id, procContextVars.i); //DEBUG
+    //g_mutex_unlock(loki);
     sigsetjmp(Tasks[process_id].env, process_id + 1);
 
     sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
-    //sigprocmask(SIG_SETMASK, &orig_mask, NULL); // END OF CRITICAL REGION
   }
 
   while(1);
   return procContextVars.val;
 }
 
-/*------------------------------------------Schedulers--------------------------*/
+/*--------------------------------Schedulers------------------------------------*/
 
 void check_ReadyTasks()
 {
@@ -280,7 +282,7 @@ void Scheduler(int signum)
 {
   //sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
   quantum_Counter ++;
-  jmp_buf * Next_env;
+  jmp_buf* Next_env;
 
   if(process_id != -1){
     // Set appropriate flags and store relevant exec info
@@ -301,13 +303,13 @@ void Scheduler(int signum)
   }
 
   setNextID();
-  
+
   if(-1 == process_id)
   {// We are done!!
     if (number_Ready_Tasks==Total_tasks)
-      siglongjmp(jmpbuffer_final, 150);
+      siglongjmp(*jmpbuffer_final, 150);
     else
-      siglongjmp(jmpbuffer_BusyWaiting, 150);
+      siglongjmp(*jmpbuffer_BusyWaiting, 150);
   }
 
   if(1 == Tasks[process_id].is_initialized)// Task had already been scheduled before, restore it
@@ -322,14 +324,15 @@ void Scheduler(int signum)
     procContextVars.i = 1;
     procContextVars.factor = 2;
     procContextVars.N = Tasks[process_id].N;
-    Next_env = &jmpbuffer_initial;
+    //Next_env = &jmpbuffer_initial;
+    Next_env = jmpbuffer_initial;
   }
   //sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
-  //sigprocmask(SIG_SETMASK, &orig_mask, NULL); // END OF CRITICAL REGION
+
   siglongjmp(*Next_env, process_id+1);
 }
 
-/*------------------------------------------Interrupt--------------------------*/
+/*---------------------------------Interrupt-----------------------------------*/
 
 void setInterruption()
 {
@@ -354,54 +357,65 @@ void setInterruption()
     setitimer(ITIMER_VIRTUAL, &timer, NULL);
 }
 
-/*-----------------------------------------Processor-------------------------*/
+/*------------------------------Processor------------------------------------*/
 
-void * processor()
+void* processor()
 {
+  jmp_buf jinitial;
+  jmp_buf jfinal;
+  jmp_buf busy;
+
+  jmpbuffer_initial = &jinitial;
+  jmpbuffer_final = &jfinal;
+  jmpbuffer_BusyWaiting = &busy;
   setInterruption();
 
-  if(0 != sigsetjmp(jmpbuffer_final, 1)) 
+  if(0 != sigsetjmp(*jmpbuffer_final, 1)) 
   {
     for(int i=0; i < number_Ready_Tasks; i++) // Let's see them PIs, baby
       printf("P%d's PI = %f\n", i, Tasks[i].vars.val);
   }
-  else if (0 != sigsetjmp(jmpbuffer_initial, 1)){
+  else if (0 != sigsetjmp(*jmpbuffer_initial, 1)){
     double valpi = calcArcsin();
   }else{
-    sigsetjmp(jmpbuffer_BusyWaiting, 1);
+    sigsetjmp(*jmpbuffer_BusyWaiting, 1);
     while(1);
   }
 
 }
 
-/*-----------------------------------------GUI-------------------------*/
+/*-------------------------------GUI-----------------------------------*/
 
 static gboolean update_GUI(gpointer data)
 {
-  sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
-
-  
-  value_random += 0.05;
-  if (value_random>1)
-    value_random = 0;
-  
-  char c[4];
-  sprintf(c, "%d%%", (int)(value_random*100));
+  //if(g_mutex_trylock(loki))
+  //{
+    //sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
+    value_random += 0.05;
+    if (value_random>1)
+      value_random = 0;
     
-  gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[0].pb_Percentage), value_random);
-  gtk_progress_bar_set_text(GTK_PROGRESS_BAR(all_Widgets[0].pb_Percentage), c); 
+    char c[4];
+    sprintf(c, "%d%%", (int)(value_random*100));
+      
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[0].pb_Percentage), value_random);
+    gtk_progress_bar_set_text(GTK_PROGRESS_BAR(all_Widgets[0].pb_Percentage), c); 
 
-  sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
-  //sigprocmask(SIG_SETMASK, &orig_mask, NULL); // END OF CRITICAL REGION
+    //g_mutex_unlock(loki);
+    //sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
+  //}
   return TRUE;
 }
 
-void *control_GUI()
+void* control_GUI()
 {
-  GtkWidget *window;
-  GtkWidget *table;
-  GtkWidget *label;
+  GtkWidget* window;
+  GtkWidget* table;
+  GtkWidget* label;
 
+  sigprocmask(SIG_BLOCK, &mask, &orig_mask);// MAGIC
+
+  gdk_threads_init();
   gtk_init(NULL, NULL);
     
   window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
@@ -447,16 +461,16 @@ void *control_GUI()
   g_signal_connect (window, "delete-event", G_CALLBACK (gtk_main_quit), NULL);
   g_signal_connect (window, "destroy", G_CALLBACK (gtk_main_quit), NULL);
 
-  g_timeout_add(10, update_GUI, table);
-
   gtk_container_set_border_width (GTK_CONTAINER (window), 10);
 
   gtk_widget_show_all(window);
-    
+
+  gdk_threads_add_timeout(500, update_GUI, window);
+
   gtk_main ();
 }
 
-/*------------------------------------------Main --------------------------*/
+/*----------------------------------Main----------------------------------*/
 
  
 int main(void)
@@ -476,18 +490,29 @@ int main(void)
   TotalTickets = 0;
   value_random = 0.0;
   process_id = -1; 
+
   sigfillset(&mask);
   sigemptyset(&orig_mask);
 
-  GThread *gui_Thread;
-  GThread *gui_Thread2;
-  //gui_Thread = g_thread_new("", &control_GUI, (gpointer)NULL);
-  //sleep(2);
-  //gui_Thread2 = g_thread_new("", &processor, (gpointer)NULL);
-  //sleep(2);
-  processor();
+  GMutex lock;
+  GThread* gui_Thread;
+  loki = &lock;
+  //GThread* gui_Thread2;
+  g_mutex_init(loki);
+
   //control_GUI();
-  //g_thread_join(gui_Thread);
+  gui_Thread = g_thread_new("", control_GUI, (gpointer)NULL);
+  sleep(2);
+
+  //-------------No usar esta ostia----------------------------
+  //gui_Thread = g_thread_new("", &processor, (gpointer)NULL);
+  //sleep(2);
+  //-----------------------------------------------------------
+  processor();
+
+  g_mutex_clear(loki);
+  g_thread_join(gui_Thread);
+  g_thread_unref(gui_Thread);
   //g_thread_join(gui_Thread2);
 
   return 0;
