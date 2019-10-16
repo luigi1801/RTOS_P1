@@ -14,7 +14,6 @@
 #define MAX_TASKS 25
 
 /*--------------------------Enum and structs-----------------------------*/
-
 enum algthms
 {
   RR = 0, // Round-Robin
@@ -28,7 +27,7 @@ struct conf_params
   int  arrTime[MAX_TASKS]; // Arrival time in terms of Quantum multiple
   int  procWork[MAX_TASKS];
   int  ticketNum[MAX_TASKS];
-  int  quantum; // In us
+  int  quantum; // In uS
 } conf_params;
 
 struct task_widget
@@ -58,7 +57,6 @@ struct task_info
 };
 
 /*--------------------------Global Variables-----------------------------*/
-
 // General
 int number_Ready_Tasks;
 int Total_tasks;
@@ -70,9 +68,8 @@ static sigset_t orig_mask;
 // For GUI
 static struct task_widget all_Widgets[MAX_TASKS];
 static double value_random;
-GMutex* loki;
 
-// For Schedulers
+// For Scheduler
 jmp_buf* jmpbuffer_initial;
 jmp_buf* jmpbuffer_final;
 jmp_buf* jmpbuffer_BusyWaiting;
@@ -83,12 +80,11 @@ static int actualAlgrthm;
 static int quantum_Counter;
 
 /*--------------------------Config reader-----------------------------*/
-
 void initialize_fromReader()
 {
-  actualAlgrthm = LS;
+  actualAlgrthm = RR;
   Total_tasks = 3;
-  int N = 100000;
+  int N = 100000000;
   // Initialize stuff
   for(int i=0; i < Total_tasks; i++)
   {
@@ -98,9 +94,6 @@ void initialize_fromReader()
     Tasks[i].N = N;//*(i+1)
     Tasks[i].arrTime = 10;//*(i+1)
   }
-  //Tasks[2].arrTime = 20;//*(i+1)
-
-
 }
 
 // For getting rid of trailing and leading whitespace
@@ -108,7 +101,7 @@ void initialize_fromReader()
 char* trim(char* s)
 {
   // Pointers to start & end
-  char* s1 = s,* s2 = &s[strlen(s) - 1];
+  char* s1 = s, *s2 = &s[strlen(s) - 1];
 
   // Trim tail
   while((isspace (*s2)) && (s2 >= s1))
@@ -130,9 +123,9 @@ void StrArrToIntArr(int* intArr, char* str)
 
   while (piece != NULL)              
   {
-      intArr[cnt] = atoi(piece);
-      ++cnt;
-      piece = strtok(NULL, " ");
+    intArr[cnt] = atoi(piece);
+    ++cnt;
+    piece = strtok(NULL, " ");
   }
 }
 
@@ -193,7 +186,6 @@ double calcArcsin()
   for(procContextVars.i = 1; procContextVars.i<procContextVars.N; procContextVars.i++)
   {
     sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
-    //g_mutex_lock(loki);
 
     procContextVars.factor *= (2*procContextVars.i-1);
     procContextVars.factor /= (2*procContextVars.i);
@@ -201,7 +193,7 @@ double calcArcsin()
     procContextVars.val += procContextVars.factor/(2*procContextVars.i+1);
 
     //printf("P #%d, I =%d\n", process_id, procContextVars.i); //DEBUG
-    //g_mutex_unlock(loki);
+
     sigsetjmp(Tasks[process_id].env, process_id + 1);
 
     sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
@@ -212,12 +204,12 @@ double calcArcsin()
 }
 
 /*--------------------------------Schedulers------------------------------------*/
-
 void check_ReadyTasks()
 {
   while(number_Ready_Tasks<Total_tasks)
   {
-    if(quantum_Counter==Tasks[number_Ready_Tasks].arrTime){
+    if(quantum_Counter==Tasks[number_Ready_Tasks].arrTime)
+    {
       TotalTickets += Tasks[number_Ready_Tasks].tickets;
       number_Ready_Tasks++;
     }
@@ -229,9 +221,9 @@ void check_ReadyTasks()
 void setNextID_RR()
 {
   // Find next available task
-
   int counter_finished = 0;
-  do{
+  do
+  {
     process_id = process_id == number_Ready_Tasks - 1 ? 0 :  process_id +1;
     counter_finished++;
   }
@@ -239,7 +231,6 @@ void setNextID_RR()
 
   if (number_Ready_Tasks < counter_finished)
     process_id = -1;
-
 }
 
 int setLotteryWinner()
@@ -254,7 +245,8 @@ int setLotteryWinner()
     {
       if(1 == Tasks[i].is_finished) continue;
       acumm += Tasks[i].tickets;
-      if (acumm > comparator){
+      if (acumm > comparator)
+      {
         process_id = i;
         break;
       }
@@ -277,14 +269,13 @@ void setNextID()
   }
 }
 
-
 void Scheduler(int signum)
 {
-  //sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
   quantum_Counter ++;
   jmp_buf* Next_env;
 
-  if(process_id != -1){
+  if(process_id != -1)
+  {
     // Set appropriate flags and store relevant exec info
       Tasks[process_id].vars = procContextVars;
       if(procContextVars.i == Tasks[process_id].N)
@@ -292,15 +283,14 @@ void Scheduler(int signum)
         printf("Soy proceso #%d. \tval: %f.\t It: %d\n", process_id, procContextVars.val, procContextVars.i);
         Tasks[process_id].is_finished = 1;
         TotalTickets -= Tasks[process_id].tickets;
-  
-    }
-    else if(0 == Tasks[process_id].is_finished)
-      printf("Interrumpting process #%d. \tval: %f.\t It: %d.\n", process_id, Tasks[process_id].vars.val, Tasks[process_id].vars.i);
+      }
+      //else if(0 == Tasks[process_id].is_finished)
+        //printf("Interrumpting process #%d. \tval: %f.\t It: %d.\n", process_id, Tasks[process_id].vars.val, Tasks[process_id].vars.i);
   }
-  else
-  {
-    printf("Quantum: %d\n", quantum_Counter);
-  }
+  //else
+  //{
+  //  printf("Quantum: %d\n", quantum_Counter);
+  //}
 
   setNextID();
 
@@ -324,16 +314,14 @@ void Scheduler(int signum)
     procContextVars.i = 1;
     procContextVars.factor = 2;
     procContextVars.N = Tasks[process_id].N;
-    //Next_env = &jmpbuffer_initial;
+
     Next_env = jmpbuffer_initial;
   }
-  //sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
 
   siglongjmp(*Next_env, process_id+1);
 }
 
 /*---------------------------------Interrupt-----------------------------------*/
-
 void setInterruption()
 {
     struct sigaction sa;
@@ -345,20 +333,16 @@ void setInterruption()
 
     sigaction(SIGVTALRM, &sa, NULL);
 
-    //sigemptyset(&mask);
-    //sigaddset(&mask, SIGVTALRM);
-
-    // Configure the timer to 250 msec
+    // Configure the timer to 200 msec
     timer.it_value.tv_sec = 0; // this is necessary
     timer.it_value.tv_usec = 200;
-    // Set a 250 msec interval
+    // Set a 200 msec interval
     timer.it_interval.tv_sec = 0;
     timer.it_interval.tv_usec = 200;
     setitimer(ITIMER_VIRTUAL, &timer, NULL);
 }
 
 /*------------------------------Processor------------------------------------*/
-
 void* processor()
 {
   jmp_buf jinitial;
@@ -371,39 +355,39 @@ void* processor()
   setInterruption();
 
   if(0 != sigsetjmp(*jmpbuffer_final, 1)) 
-  {
     for(int i=0; i < number_Ready_Tasks; i++) // Let's see them PIs, baby
       printf("P%d's PI = %f\n", i, Tasks[i].vars.val);
-  }
-  else if (0 != sigsetjmp(*jmpbuffer_initial, 1)){
-    double valpi = calcArcsin();
-  }else{
+  else if (0 != sigsetjmp(*jmpbuffer_initial, 1))
+    calcArcsin();
+  else
+  {
     sigsetjmp(*jmpbuffer_BusyWaiting, 1);
     while(1);
   }
-
 }
 
 /*-------------------------------GUI-----------------------------------*/
-
 static gboolean update_GUI(gpointer data)
 {
-  //if(g_mutex_trylock(loki))
-  //{
-    //sigprocmask(SIG_BLOCK, &mask, &orig_mask); // CRITICAL REGION
-    value_random += 0.05;
-    if (value_random>1)
+  char c[4];
+  for(int i = 0; i<Total_tasks; i++)
+  {
+    if(1 == Tasks[i].is_initialized)
+      value_random = Tasks[i].vars.i*1.00/Tasks[i].vars.N;
+    else
       value_random = 0;
-    
-    char c[4];
+  
     sprintf(c, "%d%%", (int)(value_random*100));
-      
-    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[0].pb_Percentage), value_random);
-    gtk_progress_bar_set_text(GTK_PROGRESS_BAR(all_Widgets[0].pb_Percentage), c); 
-
-    //g_mutex_unlock(loki);
-    //sigprocmask(SIG_UNBLOCK, &mask, &orig_mask); // END OF CRITICAL REGION
-  //}
+          
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[i].pb_Percentage), value_random);
+    gtk_progress_bar_set_text(GTK_PROGRESS_BAR(all_Widgets[i].pb_Percentage), c);
+    if(0 == Tasks[i].is_initialized)
+      gtk_label_set_text(GTK_LABEL(all_Widgets[i].lbl_Active),"Not Initialized");
+    else if(process_id == i)
+      gtk_label_set_text(GTK_LABEL(all_Widgets[i].lbl_Active),"Active"); 
+    else
+      gtk_label_set_text(GTK_LABEL(all_Widgets[i].lbl_Active),"Inactive");
+  }
   return TRUE;
 }
 
@@ -420,42 +404,53 @@ void* control_GUI()
     
   window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 
-  table = gtk_table_new (number_Ready_Tasks+1, 4, TRUE);
+  table = gtk_table_new (Total_tasks+2, 4, TRUE);
+
+  switch(actualAlgrthm)
+  {
+    case RR:
+      label = gtk_label_new("Round-Robin");
+      break;
+    case LS:
+    default:
+      label = gtk_label_new("CLottery Scheduler");
+      break;
+  }
+
+  gtk_table_attach_defaults (GTK_TABLE (table), label, 0, 4, 0, 1);
 
   label = gtk_label_new("Thread #");
-  gtk_table_attach_defaults (GTK_TABLE (table), label, 0, 1, 0, 1);
+  gtk_table_attach_defaults (GTK_TABLE (table), label, 0, 1, 1, 2);
 
   label = gtk_label_new("% Trabajo Terminado");
-  gtk_table_attach_defaults (GTK_TABLE (table), label, 1, 2, 0, 1);
+  gtk_table_attach_defaults (GTK_TABLE (table), label, 1, 2, 1, 2);
 
   label = gtk_label_new("Trabajo Activo");
-  gtk_table_attach_defaults (GTK_TABLE (table), label, 2, 3, 0, 1);
+  gtk_table_attach_defaults (GTK_TABLE (table), label, 2, 3, 1, 2);
 
   label = gtk_label_new("Valor Acumulado");
-  gtk_table_attach_defaults (GTK_TABLE (table), label, 3, 4, 0, 1);
+  gtk_table_attach_defaults (GTK_TABLE (table), label, 3, 4, 1, 2);
 
   char c[20];
-  for(int i = 1; i<=number_Ready_Tasks; i++)
+  for(int i = 1; i<=Total_tasks; i++)
   { 
     sprintf(c, "%d", i);
     label = gtk_label_new(c);
-    gtk_table_attach_defaults (GTK_TABLE(table), label, 0, 1, i, i+1);
+    gtk_table_attach_defaults (GTK_TABLE(table), label, 0, 1, i+1, i+2);
     
     sprintf(c, "%d", 0);
     all_Widgets[i-1].pb_Percentage = gtk_progress_bar_new();
     gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[i-1].pb_Percentage), 0.0);
     gtk_progress_bar_set_text(GTK_PROGRESS_BAR(all_Widgets[i-1].pb_Percentage), "0%");
-    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].pb_Percentage , 1, 2, i, i+1);
+    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].pb_Percentage , 1, 2, i+1, i+2);
   
     all_Widgets[i-1].lbl_Active = gtk_label_new("Inactivo");
-    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].lbl_Active, 2, 3, i, i+1);
+    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].lbl_Active, 2, 3, i+1, i+2);
     
     all_Widgets[i-1].lbl_Value = gtk_label_new(c);
-    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].lbl_Value , 3, 4, i, i+1);
+    gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].lbl_Value , 3, 4, i+1, i+2);
   }
 
-  gtk_label_set_text(GTK_LABEL(all_Widgets[1].lbl_Value), "25");
-      
   gtk_container_add (GTK_CONTAINER (window), table);
 
   g_signal_connect (window, "delete-event", G_CALLBACK (gtk_main_quit), NULL);
@@ -465,23 +460,17 @@ void* control_GUI()
 
   gtk_widget_show_all(window);
 
-  gdk_threads_add_timeout(500, update_GUI, window);
+  gdk_threads_add_timeout(50, update_GUI, window);
 
   gtk_main ();
 }
 
 /*----------------------------------Main----------------------------------*/
-
- 
 int main(void)
 {
-
-  /* Intializes random number generator */
+  // Initializes random number generator
   time_t t;
   srand((unsigned) time(&t));
-
-  pthread_t thread1;
-  int  iret1;
 
   initialize_fromReader();
 
@@ -494,26 +483,16 @@ int main(void)
   sigfillset(&mask);
   sigemptyset(&orig_mask);
 
-  GMutex lock;
   GThread* gui_Thread;
-  loki = &lock;
-  //GThread* gui_Thread2;
-  g_mutex_init(loki);
 
-  //control_GUI();
   gui_Thread = g_thread_new("", control_GUI, (gpointer)NULL);
   sleep(2);
 
-  //-------------No usar esta ostia----------------------------
-  //gui_Thread = g_thread_new("", &processor, (gpointer)NULL);
-  //sleep(2);
-  //-----------------------------------------------------------
   processor();
+  sigprocmask(SIG_BLOCK, &mask, &orig_mask); // we are done, disable signal interrupts
 
-  g_mutex_clear(loki);
   g_thread_join(gui_Thread);
   g_thread_unref(gui_Thread);
-  //g_thread_join(gui_Thread2);
 
   return 0;
 }
