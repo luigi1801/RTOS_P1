@@ -54,12 +54,13 @@ struct task_info
   int is_finished;
   int tickets;
   struct vars_Arcsin vars;
-};
+} task_info;
 
 /*--------------------------Global Variables-----------------------------*/
 // General
 int number_Ready_Tasks;
 int Total_tasks;
+int Quantum;
 static struct task_info Tasks[MAX_TASKS];
 static volatile sig_atomic_t process_id = 0;
 static sigset_t mask;
@@ -67,7 +68,6 @@ static sigset_t orig_mask;
 
 // For GUI
 static struct task_widget all_Widgets[MAX_TASKS];
-static double value_random;
 
 // For Scheduler
 jmp_buf* jmpbuffer_initial;
@@ -80,22 +80,6 @@ static int actualAlgrthm;
 static int quantum_Counter;
 
 /*--------------------------Config reader-----------------------------*/
-void initialize_fromReader()
-{
-  actualAlgrthm = RR;
-  Total_tasks = 3;
-  int N = 100000000;
-  // Initialize stuff
-  for(int i=0; i < Total_tasks; i++)
-  {
-    Tasks[i].is_initialized = 0;
-    Tasks[i].is_finished = 0;
-    Tasks[i].tickets = (i+1)*1000;
-    Tasks[i].N = N;//*(i+1)
-    Tasks[i].arrTime = 10;//*(i+1)
-  }
-}
-
 // For getting rid of trailing and leading whitespace
 // including line break char from fgets()
 char* trim(char* s)
@@ -179,8 +163,32 @@ void ReadConfig(struct conf_params* params)
   fclose(fp);
 }
 
-/*---------------------------------Arcsin-----------------------------------*/
+void initialize_fromReader()
+{
+  struct conf_params params;
+  memset(&params, 0, sizeof(params));
+  memset(&Tasks, 0, sizeof(task_info) * MAX_TASKS);
 
+  printf("Reading config file...\n");
+  ReadConfig(&params);
+
+  actualAlgrthm = params.algorithm;
+  Total_tasks = params.numProc;
+  Quantum = params.quantum;
+
+  // Initialize stuff
+  for(int i = 0; i < Total_tasks; i++)
+  {
+    Tasks[i].is_initialized = 0;
+    Tasks[i].is_finished = 0;
+    Tasks[i].tickets = params.ticketNum[i];
+    Tasks[i].N = 50 * params.procWork[i];
+    Tasks[i].arrTime = params.arrTime[i];
+  }
+  printf("---------Done---------\n");
+}
+
+/*---------------------------------Arcsin-----------------------------------*/
 double calcArcsin()
 {
   for(procContextVars.i = 1; procContextVars.i<procContextVars.N; procContextVars.i++)
@@ -189,10 +197,7 @@ double calcArcsin()
 
     procContextVars.factor *= (2*procContextVars.i-1);
     procContextVars.factor /= (2*procContextVars.i);
-
     procContextVars.val += procContextVars.factor/(2*procContextVars.i+1);
-
-    //printf("P #%d, I =%d\n", process_id, procContextVars.i); //DEBUG
 
     sigsetjmp(Tasks[process_id].env, process_id + 1);
 
@@ -204,11 +209,11 @@ double calcArcsin()
 }
 
 /*--------------------------------Schedulers------------------------------------*/
-void check_ReadyTasks()
+void checkReadyTasks()
 {
-  while(number_Ready_Tasks<Total_tasks)
+  while(number_Ready_Tasks < Total_tasks)
   {
-    if(quantum_Counter==Tasks[number_Ready_Tasks].arrTime)
+    if(quantum_Counter == Tasks[number_Ready_Tasks].arrTime)
     {
       TotalTickets += Tasks[number_Ready_Tasks].tickets;
       number_Ready_Tasks++;
@@ -224,7 +229,7 @@ void setNextID_RR()
   int counter_finished = 0;
   do
   {
-    process_id = process_id == number_Ready_Tasks - 1 ? 0 :  process_id +1;
+    process_id = process_id == number_Ready_Tasks - 1 ? 0 :  process_id + 1;
     counter_finished++;
   }
   while(1 == Tasks[process_id].is_finished && counter_finished <= number_Ready_Tasks);
@@ -256,7 +261,7 @@ int setLotteryWinner()
 
 void setNextID()
 {
-  check_ReadyTasks();
+  checkReadyTasks();
   switch(actualAlgrthm)
   {
     case RR:
@@ -284,13 +289,7 @@ void Scheduler(int signum)
         Tasks[process_id].is_finished = 1;
         TotalTickets -= Tasks[process_id].tickets;
       }
-      //else if(0 == Tasks[process_id].is_finished)
-        //printf("Interrumpting process #%d. \tval: %f.\t It: %d.\n", process_id, Tasks[process_id].vars.val, Tasks[process_id].vars.i);
   }
-  //else
-  //{
-  //  printf("Quantum: %d\n", quantum_Counter);
-  //}
 
   setNextID();
 
@@ -318,7 +317,7 @@ void Scheduler(int signum)
     Next_env = jmpbuffer_initial;
   }
 
-  siglongjmp(*Next_env, process_id+1);
+  siglongjmp(*Next_env, process_id + 1);
 }
 
 /*---------------------------------Interrupt-----------------------------------*/
@@ -335,10 +334,10 @@ void setInterruption()
 
     // Configure the timer to 200 msec
     timer.it_value.tv_sec = 0; // this is necessary
-    timer.it_value.tv_usec = 200;
+    timer.it_value.tv_usec = Quantum;
     // Set a 200 msec interval
     timer.it_interval.tv_sec = 0;
-    timer.it_interval.tv_usec = 200;
+    timer.it_interval.tv_usec = Quantum;
     setitimer(ITIMER_VIRTUAL, &timer, NULL);
 }
 
@@ -369,24 +368,30 @@ void* processor()
 /*-------------------------------GUI-----------------------------------*/
 static gboolean update_GUI(gpointer data)
 {
-  char c[4];
+  char c[10];
+  double percentage = 0.0;
   for(int i = 0; i<Total_tasks; i++)
   {
     if(1 == Tasks[i].is_initialized)
-      value_random = Tasks[i].vars.i*1.00/Tasks[i].vars.N;
+      percentage = ((double)Tasks[i].vars.i)/Tasks[i].N;
     else
-      value_random = 0;
+      percentage = 0.001;
   
-    sprintf(c, "%d%%", (int)(value_random*100));
-          
-    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[i].pb_Percentage), value_random);
+    sprintf(c, "%d%%", (int)(percentage*100));
+
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[i].pb_Percentage), percentage);
     gtk_progress_bar_set_text(GTK_PROGRESS_BAR(all_Widgets[i].pb_Percentage), c);
     if(0 == Tasks[i].is_initialized)
-      gtk_label_set_text(GTK_LABEL(all_Widgets[i].lbl_Active),"Not Initialized");
+      gtk_label_set_text(GTK_LABEL(all_Widgets[i].lbl_Active), "Not Initialized");
     else if(process_id == i)
-      gtk_label_set_text(GTK_LABEL(all_Widgets[i].lbl_Active),"Active"); 
+      gtk_label_set_text(GTK_LABEL(all_Widgets[i].lbl_Active), "Active");
+    else if(1 == Tasks[i].is_finished)
+      gtk_label_set_text(GTK_LABEL(all_Widgets[i].lbl_Active), "Finished"); 
     else
-      gtk_label_set_text(GTK_LABEL(all_Widgets[i].lbl_Active),"Inactive");
+      gtk_label_set_text(GTK_LABEL(all_Widgets[i].lbl_Active), "Inactive");
+
+    sprintf(c, "%.5f", Tasks[i].vars.val);
+    gtk_label_set_text(GTK_LABEL(all_Widgets[i].lbl_Value), c);
   }
   return TRUE;
 }
@@ -413,7 +418,7 @@ void* control_GUI()
       break;
     case LS:
     default:
-      label = gtk_label_new("CLottery Scheduler");
+      label = gtk_label_new("Lottery Scheduler");
       break;
   }
 
@@ -440,11 +445,11 @@ void* control_GUI()
     
     sprintf(c, "%d", 0);
     all_Widgets[i-1].pb_Percentage = gtk_progress_bar_new();
-    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[i-1].pb_Percentage), 0.0);
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(all_Widgets[i-1].pb_Percentage), 0.001);
     gtk_progress_bar_set_text(GTK_PROGRESS_BAR(all_Widgets[i-1].pb_Percentage), "0%");
     gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].pb_Percentage , 1, 2, i+1, i+2);
   
-    all_Widgets[i-1].lbl_Active = gtk_label_new("Inactivo");
+    all_Widgets[i-1].lbl_Active = gtk_label_new("Inactive");
     gtk_table_attach_defaults (GTK_TABLE(table), all_Widgets[i-1].lbl_Active, 2, 3, i+1, i+2);
     
     all_Widgets[i-1].lbl_Value = gtk_label_new(c);
@@ -477,7 +482,6 @@ int main(void)
   quantum_Counter = -1;
   number_Ready_Tasks = 0;
   TotalTickets = 0;
-  value_random = 0.0;
   process_id = -1; 
 
   sigfillset(&mask);
