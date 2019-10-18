@@ -163,6 +163,49 @@ void ReadConfig(struct conf_params* params)
   fclose(fp);
 }
 
+int compare(const void* a, const void* b)
+{
+  int int_a = *((int*) a);
+  int int_b = *((int*) b);
+
+  return (int_a > int_b) - (int_a < int_b);
+}
+
+void custom_qsort(struct conf_params* conf, int length, int size, int(*compar)(const void* a, const void* b))
+{
+  if(length > 1)
+  {
+    int* p = malloc(size);
+    int* arrT = conf->arrTime;
+    int* procW = conf->procWork;
+    int* tickN = conf->ticketNum;
+
+    for(int i = 0; i < length - 1; i++)
+    {
+      for(int j = i; j < length; j++)
+      {
+        if(compar(&arrT[i], &arrT[j]) > 0) // Compare arrival time only, but sort the other two fields as well
+        {
+          //--------Arrival time---------
+          memcpy(p, &arrT[i], size);
+          memcpy(&arrT[i], &arrT[j], size);
+          memcpy(&arrT[j], p, size);
+          //---------Proc work-----------
+          memcpy(p, &procW[i], size);
+          memcpy(&procW[i], &procW[j], size);
+          memcpy(&procW[j], p, size);
+          //--------Ticket num-----------
+          memcpy(p, &tickN[i], size);
+          memcpy(&tickN[i], &tickN[j], size);
+          memcpy(&tickN[j], p, size);
+        }
+      }
+    }
+
+    free(p);
+  }
+}
+
 void initialize_fromReader()
 {
   struct conf_params params;
@@ -171,6 +214,8 @@ void initialize_fromReader()
 
   printf("Reading config file...\n");
   ReadConfig(&params);
+
+  custom_qsort(&params, params.numProc, sizeof(int), compare);
 
   actualAlgrthm = params.algorithm;
   Total_tasks = params.numProc;

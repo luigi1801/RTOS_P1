@@ -105,6 +105,52 @@ void parse_config(struct conf_params* params)
   fclose(fp);
 }
 
+int compare(const void* a, const void* b)
+{
+     int int_a = *((int*) a);
+     int int_b = *((int*) b);
+
+     return (int_a > int_b) - (int_a < int_b);
+     /*if ( int_a == int_b ) return 0;
+     else if ( int_a < int_b ) return -1;
+     else return 1;*/
+}
+
+void custom_qsort(struct conf_params* conf, int length, int pace, int(*compar)(const void* a, const void* b))
+{
+  if (length > 1)
+  {
+    int* p = malloc(pace);
+    int* arrT = conf->arrTime;
+    int* procW = conf->procWork;
+    int* tickN = conf->ticketNum;
+
+    for(int i = 0; i < length - 1; i++)
+    {
+      for(int j = i; j < length; j++)
+      {
+        if(compar(&arrT[i], &arrT[j]) > 0) // Compare arrival time only, but sort the other two fields as well
+        {
+          //--------Arrival time---------
+          memcpy(p, &arrT[i], pace);
+          memcpy(&arrT[i], &arrT[j], pace);
+          memcpy(&arrT[j], p, pace);
+          //---------Proc work-----------
+          memcpy(p, &procW[i], pace);
+          memcpy(&procW[i], &procW[j], pace);
+          memcpy(&procW[j], p, pace);
+          //--------Ticket num-----------
+          memcpy(p, &tickN[i], pace);
+          memcpy(&tickN[i], &tickN[j], pace);
+          memcpy(&tickN[j], p, pace);
+        }
+      }
+    }
+
+    free(p);
+  }
+}
+
 int main (int argc, char *argv[])
 {
   int i = 0;
@@ -113,6 +159,8 @@ int main (int argc, char *argv[])
 
   printf ("Reading config file...\n");
   parse_config (&params);
+
+  custom_qsort(&params, params.numProc, sizeof(int), compare);
 
   printf ("Final values:\n");
   printf ("  Algorithm: %d, numProc: %d, quantum: %duS\n",

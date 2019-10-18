@@ -2,7 +2,7 @@
 # 0 is RR, 1 is Lottery
 algorithm=1
 numProc=7
-arrTime=0 4 5 7 8 56 70
+arrTime=0 41 5 72 8 56 70
 procWork=2000000 1000000 500000 700000 750000 600000 1500000
 ticketNum=10 20 30 50 60 70 80
 quantum=200
