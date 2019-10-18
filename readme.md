@@ -4,8 +4,8 @@ Para compilar, correr el comando     make
 Para correr el proyecto, utilizar el comando     ./Proyecto1
 
 El ejecutable utiliza el archivo config.txt para cargar las configuraciones del scheduler
-El archivo de configuracion reside en el mismo directorio que el ejecutable y el .c
-ATENCION: El uso inadecuado del archivo de configuracion resulta en comportamiento indefinido, muy
+El archivo de configuración reside en el mismo directorio que el ejecutable y el .c
+ATENCION: El uso inadecuado del archivo de configuración resulta en comportamiento indefinido, muy
 	posiblemente colapso del programa. Debe proveerse siempre todos los argumentos.
 El formato del config.txt esta dado como sigue:
 
@@ -19,23 +19,23 @@ ticketNum=10 20 30 50 60 70 80
 quantum=200
 ---------------------------------------fin del ejemplo--------------------------------------------
 
-Lineas de comentario comienzan con '#'
+Líneas de comentario comienzan con '#'
 
-Descripcion de parametros
+Descripción de parámetros
 	- algorithm:
-		Puede tomar unicamente el valor de 0 o 1, siendo '0' Round Robin, y '1' Lottery Scheduling
+		Puede tomar únicamente el valor de 0 o 1, siendo '0' Round Robin, y '1' Lottery Scheduling
 	- numProc:
-		Numero de procesos o tareas a simular
+		Número de procesos o tareas a simular
 	- arrTime:
-		lista de [numProc] numeros enteros positivos (tambien el cero), separados por un espacio,
-		correspondientes al tiempo de llegada de cada proceso
+		lista de [numProc] números enteros positivos (también el cero), separados por un espacio,
+		correspondientes al tiempo de llegada de cada proceso, como múltiplo del quantum
 	- procWork:
-		lista de [numProc] numeros enteros mayores a cero, separados entre ellos por un espacio,
-		los cuales se habran de multiplicar por 50, el resultado de ello corresponde a la cantidad
-		de iteraciones que se utilizaran en el calculo de PI, para cada proceso
+		lista de [numProc] números enteros mayores a cero, separados entre ellos por un espacio,
+		los cuales se habrán de multiplicar por 50; el resultado de ello corresponde a la cantidad
+		de iteraciones que se utilizarán en el calculo de PI, para cada proceso
 	- ticketNum:
-		lista de [numProc] numeros enteros, separados entre ellos por un espacio, correspondientes
+		lista de [numProc] números enteros, separados entre ellos por un espacio, correspondientes
 		a la cantidad de tiquetes de cada proceso, para el Lottery Scheduling
 	- quantum:
-		numero entero mayor a cero, correspondiente al tiempo en uS a utilizar para el quantum del
+		número entero mayor a cero, correspondiente al tiempo en uS a utilizar para el quantum del
 		"procesador"
