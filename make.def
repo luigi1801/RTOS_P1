@@ -1,0 +1,13 @@
+# for gcc compiler on Linux
+# copy to make.def
+CC          = gcc
+CLINKER     = $(CC)
+OPTFLAGS    = `pkg-config --cflags --libs gtk+-2.0`
+LIBS        = 
+PRE         = ./
+
+CFLAGS	  = $(OPTFLAGS)
+
+OBJ=c
+EXE=
+RM=rm

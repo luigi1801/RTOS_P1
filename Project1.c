@@ -372,7 +372,7 @@ static gboolean update_GUI(gpointer data)
   double percentage = 0.0;
   for(int i = 0; i<Total_tasks; i++)
   {
-    if(1 == Tasks[i].is_initialized)
+    if(1 == Tasks[i].is_initialized && 0 < Tasks[i].N)
       percentage = ((double)Tasks[i].vars.i)/Tasks[i].N;
     else
       percentage = 0.001;
@@ -490,13 +490,12 @@ int main(void)
   GThread* gui_Thread;
 
   gui_Thread = g_thread_new("", control_GUI, (gpointer)NULL);
-  sleep(2);
+  //sleep(2);
 
   processor();
   sigprocmask(SIG_BLOCK, &mask, &orig_mask); // we are done, disable signal interrupts
 
-  g_thread_join(gui_Thread);
-  g_thread_unref(gui_Thread);
+  g_thread_join(gui_Thread); // this implicitly unrefs the thread pointer
 
   return 0;
 }
